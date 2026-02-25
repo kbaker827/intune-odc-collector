@@ -50,6 +50,7 @@ class ODCLogCollector:
         
         self._create_header(main_frame)
         self._create_info_section(main_frame)
+        self._create_mode_section(main_frame)
         self._create_actions_section(main_frame)
         self._create_progress_section(main_frame)
         self._create_output_section(main_frame)
@@ -80,10 +81,11 @@ class ODCLogCollector:
         
         info_text = """This tool collects Intune One Data Collector (ODC) logs which are used by Microsoft Support to diagnose Intune issues.
 
-The process will:
-1. Download Intune.XML configuration from Microsoft
-2. Collect files, registry keys, event logs, and command outputs (takes ~10 minutes)
-3. Create a compressed ZIP file with all data
+Choose collection method:
+• Native Python - Uses built-in Python collection (recommended, faster)
+• Microsoft Tool - Downloads and runs official Microsoft PowerShell script
+
+The process takes ~10 minutes and creates a compressed ZIP file with all data.
 
 Note: This tool must be run as Administrator."""
         
@@ -94,6 +96,57 @@ Note: This tool must be run as Administrator."""
             justify=tk.LEFT,
             wraplength=650
         ).pack(anchor=tk.W)
+        
+    def _create_mode_section(self, parent):
+        """Create collection mode selection"""
+        mode_frame = ttk.LabelFrame(parent, text="Collection Mode", padding="10")
+        mode_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        self.collection_mode = tk.StringVar(value='native')
+        
+        # Native Python option
+        native_frame = ttk.Frame(mode_frame)
+        native_frame.pack(fill=tk.X, pady=2)
+        
+        ttk.Radiobutton(
+            native_frame,
+            text="Native Python",
+            variable=self.collection_mode,
+            value='native'
+        ).pack(side=tk.LEFT)
+        
+        ttk.Label(
+            native_frame,
+            text="(Recommended - Faster, works offline with cached XML)",
+            font=('Segoe UI', 8),
+            foreground='green'
+        ).pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Microsoft Tool option
+        ms_frame = ttk.Frame(mode_frame)
+        ms_frame.pack(fill=tk.X, pady=2)
+        
+        ttk.Radiobutton(
+            ms_frame,
+            text="Microsoft Tool",
+            variable=self.collection_mode,
+            value='microsoft'
+        ).pack(side=tk.LEFT)
+        
+        ttk.Label(
+            ms_frame,
+            text="(Uses official Microsoft PowerShell script)",
+            font=('Segoe UI', 8),
+            foreground='gray'
+        ).pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Cache XML checkbox
+        self.cache_xml_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            mode_frame,
+            text="Cache Intune.XML locally (faster subsequent runs)",
+            variable=self.cache_xml_var
+        ).pack(anchor=tk.W, pady=(5, 0))
         
     def _create_actions_section(self, parent):
         """Create action buttons"""
@@ -207,18 +260,41 @@ Note: This tool must be run as Administrator."""
             return False
             
     def download_xml(self):
-        """Download Intune.XML from Microsoft"""
+        """Download Intune.XML from Microsoft with caching"""
         xml_path = os.path.join(self.log_dir, "Intune.xml")
+        cache_path = os.path.join(self.log_dir, "Intune.xml.cached")
         url = "https://raw.githubusercontent.com/markstan/IntuneOneDataCollector/master/Intune.xml"
+        
+        # Check if we should use cached version
+        if self.cache_xml_var.get() and os.path.exists(cache_path):
+            # Check if cache is less than 7 days old
+            cache_age = time.time() - os.path.getmtime(cache_path)
+            if cache_age < 7 * 24 * 3600:  # 7 days
+                self._log(f"Using cached Intune.XML (age: {cache_age/3600:.1f} hours)")
+                shutil.copy(cache_path, xml_path)
+                return xml_path
+            else:
+                self._log("Cache expired, downloading fresh copy...")
         
         self._update_status("Downloading Intune.XML...")
         
         try:
             urllib.request.urlretrieve(url, xml_path)
             self._log(f"Downloaded: {xml_path}")
+            
+            # Cache the file if caching is enabled
+            if self.cache_xml_var.get():
+                shutil.copy(xml_path, cache_path)
+                self._log("Cached Intune.XML for future use")
+            
             return xml_path
         except Exception as e:
             self._log(f"Error downloading XML: {e}")
+            # Try to use cached version as fallback even if expired
+            if os.path.exists(cache_path):
+                self._log("Using expired cached XML as fallback...")
+                shutil.copy(cache_path, xml_path)
+                return xml_path
             raise
             
     def parse_xml(self, xml_path):
@@ -646,105 +722,186 @@ function RunCommand($cmdToRun) {
         thread.daemon = True
         thread.start()
         
+    def run_microsoft_tool(self):
+        """Download and run Microsoft's official Intune ODC PowerShell script"""
+        self._update_status("Downloading Microsoft Intune ODC script...")
+        
+        ps1_url = "https://aka.ms/intuneps1"
+        xml_url = "https://aka.ms/intunexml"
+        
+        ps1_path = os.path.join(self.log_dir, "IntuneODCStandAlone.ps1")
+        xml_path = os.path.join(self.log_dir, "Intune.xml")
+        
+        try:
+            # Download the PowerShell script
+            self._log(f"Downloading from {ps1_url}")
+            urllib.request.urlretrieve(ps1_url, ps1_path)
+            self._log(f"Downloaded: {ps1_path}")
+            self.progress_var.set(20)
+            
+            # Download the XML
+            self._log(f"Downloading from {xml_url}")
+            urllib.request.urlretrieve(xml_url, xml_path)
+            self._log(f"Downloaded: {xml_path}")
+            self.progress_var.set(30)
+            
+            # Run the PowerShell script
+            self._update_status("Running Microsoft Intune ODC collection script...")
+            self._log("This may take 10-15 minutes...")
+            
+            result = subprocess.run(
+                ['powershell', '-ExecutionPolicy', 'Bypass', '-File', ps1_path],
+                capture_output=True,
+                text=True,
+                timeout=900,  # 15 minute timeout
+                cwd=self.log_dir
+            )
+            
+            self._log("Microsoft script output:")
+            if result.stdout:
+                for line in result.stdout.split('\n'):
+                    if line.strip():
+                        self._log(f"  {line.strip()}")
+            
+            if result.stderr:
+                for line in result.stderr.split('\n'):
+                    if line.strip():
+                        self._log(f"  ! {line.strip()}")
+            
+            self.progress_var.set(90)
+            
+            # Find the created ZIP file
+            zip_files = [f for f in os.listdir(self.log_dir) if f.endswith('.zip')]
+            if zip_files:
+                self._log(f"Created: {zip_files[0]}")
+            
+            self.progress_var.set(100)
+            self._update_status("Microsoft tool collection complete!")
+            
+        except subprocess.TimeoutExpired:
+            self._log("Microsoft script timed out (this is normal, it takes a while)")
+            # Check if ZIP was created anyway
+            zip_files = [f for f in os.listdir(self.log_dir) if f.endswith('.zip')]
+            if zip_files:
+                self._log(f"ZIP file was created: {zip_files[0]}")
+                self.progress_var.set(100)
+            else:
+                raise Exception("Collection timed out and no ZIP file was created")
+        except Exception as e:
+            self._log(f"Error running Microsoft tool: {e}")
+            raise
+    
     def _collection_thread(self):
         """Run collection in background thread"""
         try:
             # Create directories
             self._update_status("Creating directories...")
             os.makedirs(self.log_dir, exist_ok=True)
-            self.result_dir = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), 'CollectedData')
-            if os.path.exists(self.result_dir):
-                shutil.rmtree(self.result_dir)
-            os.makedirs(self.result_dir, exist_ok=True)
-            self.progress_var.set(10)
             
-            # Download XML
-            xml_path = self.download_xml()
-            self.progress_var.set(25)
+            # Check collection mode
+            mode = self.collection_mode.get()
+            self._log(f"Collection mode: {mode}")
             
-            # Parse XML
-            packages = self.parse_xml(xml_path)
-            self.progress_var.set(30)
-            
-            # Determine namespace from first package if available
-            ns_uri = None
-            if packages:
-                first_pkg = packages[0][1]
-                if '}' in first_pkg.tag:
-                    ns_uri = first_pkg.tag.split('}')[0].strip('{')
-            ns_map = {'ns': ns_uri} if ns_uri else {}
-            
-            # Process each package
-            total_packages = len(packages)
-            for i, (pkg_id, package) in enumerate(packages):
-                if not self.is_running:
-                    return
-                    
-                self._update_status(f"Processing package: {pkg_id}")
+            if mode == 'microsoft':
+                # Use Microsoft's official tool
+                self.run_microsoft_tool()
+            else:
+                # Use native Python implementation
+                self.result_dir = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), 'CollectedData')
+                if os.path.exists(self.result_dir):
+                    shutil.rmtree(self.result_dir)
+                os.makedirs(self.result_dir, exist_ok=True)
+                self.progress_var.set(10)
                 
-                # Helper function to find child element with namespace handling
-                def find_child(parent, tag_name):
-                    # Try with namespace
-                    if ns_map:
-                        child = parent.find(f'ns:{tag_name}', ns_map)
+                # Download XML
+                xml_path = self.download_xml()
+                self.progress_var.set(25)
+                
+                # Parse XML
+                packages = self.parse_xml(xml_path)
+                self.progress_var.set(30)
+                
+                # Determine namespace from first package if available
+                ns_uri = None
+                if packages:
+                    first_pkg = packages[0][1]
+                    if '}' in first_pkg.tag:
+                        ns_uri = first_pkg.tag.split('}')[0].strip('{')
+                ns_map = {'ns': ns_uri} if ns_uri else {}
+                
+                # Process each package
+                total_packages = len(packages)
+                for i, (pkg_id, package) in enumerate(packages):
+                    if not self.is_running:
+                        return
+                        
+                    self._update_status(f"Processing package: {pkg_id}")
+                    
+                    # Helper function to find child element with namespace handling
+                    def find_child(parent, tag_name):
+                        # Try with namespace
+                        if ns_map:
+                            child = parent.find(f'ns:{tag_name}', ns_map)
+                            if child is not None:
+                                return child
+                        # Try without namespace
+                        child = parent.find(tag_name)
                         if child is not None:
                             return child
-                    # Try without namespace
-                    child = parent.find(tag_name)
-                    if child is not None:
-                        return child
-                    # Try by checking tag ending
-                    for child in parent:
-                        if child.tag.endswith(tag_name):
-                            return child
-                    return None
+                        # Try by checking tag ending
+                        for child in parent:
+                            if child.tag.endswith(tag_name):
+                                return child
+                        return None
+                    
+                    # Collect files
+                    files_elem = find_child(package, 'Files')
+                    if files_elem is not None:
+                        count = self.collect_files(pkg_id, files_elem, ns_map)
+                        if count:
+                            self._log(f"  Collected {count} files")
+                        
+                    # Collect registry
+                    reg_elem = find_child(package, 'Registries')
+                    if reg_elem is not None:
+                        count = self.collect_registry(pkg_id, reg_elem, ns_map)
+                        if count:
+                            self._log(f"  Collected {count} registry keys")
+                        
+                    # Collect event logs
+                    evt_elem = find_child(package, 'EventLogs')
+                    if evt_elem is not None:
+                        count = self.collect_eventlogs(pkg_id, evt_elem, ns_map)
+                        if count:
+                            self._log(f"  Collected {count} event logs")
+                        
+                    # Collect commands
+                    cmd_elem = find_child(package, 'Commands')
+                    if cmd_elem is not None:
+                        count = self.collect_commands(pkg_id, cmd_elem, ns_map)
+                        if count:
+                            self._log(f"  Collected {count} command outputs")
+                        
+                    progress = 30 + (i + 1) / total_packages * 60
+                    self.progress_var.set(int(progress))
                 
-                # Collect files
-                files_elem = find_child(package, 'Files')
-                if files_elem is not None:
-                    count = self.collect_files(pkg_id, files_elem, ns_map)
-                    if count:
-                        self._log(f"  Collected {count} files")
-                    
-                # Collect registry
-                reg_elem = find_child(package, 'Registries')
-                if reg_elem is not None:
-                    count = self.collect_registry(pkg_id, reg_elem, ns_map)
-                    if count:
-                        self._log(f"  Collected {count} registry keys")
-                    
-                # Collect event logs
-                evt_elem = find_child(package, 'EventLogs')
-                if evt_elem is not None:
-                    count = self.collect_eventlogs(pkg_id, evt_elem, ns_map)
-                    if count:
-                        self._log(f"  Collected {count} event logs")
-                    
-                # Collect commands
-                cmd_elem = find_child(package, 'Commands')
-                if cmd_elem is not None:
-                    count = self.collect_commands(pkg_id, cmd_elem, ns_map)
-                    if count:
-                        self._log(f"  Collected {count} command outputs")
-                    
-                progress = 30 + (i + 1) / total_packages * 60
-                self.progress_var.set(int(progress))
+                # Create ZIP for native mode
+                zip_path = self.create_zip()
+                self.progress_var.set(100)
                 
-            # Create ZIP
-            zip_path = self.create_zip()
-            self.progress_var.set(100)
-            
-            # Cleanup
-            if os.path.exists(self.result_dir):
-                shutil.rmtree(self.result_dir)
+                # Cleanup
+                if os.path.exists(self.result_dir):
+                    shutil.rmtree(self.result_dir)
                 
-            self._update_status("Collection complete!")
+                self._update_status("Collection complete!")
+                
+            # Enable open button for both modes
             self.open_btn.config(state=tk.NORMAL)
             
             messagebox.showinfo(
                 "Collection Complete",
                 f"Intune ODC logs have been collected!\n\n"
-                f"Location: {zip_path}"
+                f"Location: {self.log_dir}"
             )
             
         except Exception as e:
