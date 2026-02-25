@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 """
-Intune ODC Log Collector
+Intune ODC Log Collector - Native Python Implementation
 
-GUI tool to collect Intune One Data Collector (ODC) logs for troubleshooting.
-Runs the official Microsoft diagnostic collection script.
+Collects Intune diagnostic logs directly in Python without PowerShell.
+Downloads Intune.XML and processes it natively.
 """
 
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
-import subprocess
 import threading
 import os
 import sys
+import shutil
+import zipfile
+import subprocess
+import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from datetime import datetime
 import time
+import winreg
 
 
 class ODCLogCollector:
@@ -34,27 +40,18 @@ class ODCLogCollector:
                 pass
         
         self.is_running = False
+        self.log_dir = r"C:\IntuneODCLogs"
         self.setup_ui()
         
     def setup_ui(self):
         """Setup the user interface"""
-        # Main container
         main_frame = ttk.Frame(self.root, padding="15")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
-        # Header
         self._create_header(main_frame)
-        
-        # Info section
         self._create_info_section(main_frame)
-        
-        # Actions
         self._create_actions_section(main_frame)
-        
-        # Progress
         self._create_progress_section(main_frame)
-        
-        # Output
         self._create_output_section(main_frame)
         
     def _create_header(self, parent):
@@ -64,7 +61,7 @@ class ODCLogCollector:
         
         ttk.Label(
             header,
-            text="📁 Intune ODC Log Collector",
+            text="Intune ODC Log Collector",
             font=('Segoe UI', 16, 'bold')
         ).pack(anchor=tk.W)
         
@@ -84,12 +81,11 @@ class ODCLogCollector:
         info_text = """This tool collects Intune One Data Collector (ODC) logs which are used by Microsoft Support to diagnose Intune issues.
 
 The process will:
-1. Create directory: C:\IntuneODCLogs
-2. Download Intune.XML configuration from Microsoft
-3. Collect Intune configuration and logs using embedded PowerShell script (takes ~10 minutes)
-4. Create a compressed ZIP file with all data
+1. Download Intune.XML configuration from Microsoft
+2. Collect files, registry keys, event logs, and command outputs (takes ~10 minutes)
+3. Create a compressed ZIP file with all data
 
-⚠️  Note: This tool must be run as Administrator."""
+Note: This tool must be run as Administrator."""
         
         ttk.Label(
             info_frame,
@@ -104,7 +100,6 @@ The process will:
         action_frame = ttk.Frame(parent)
         action_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # Collect button
         self.collect_btn = tk.Button(
             action_frame,
             text="Start",
@@ -118,7 +113,6 @@ The process will:
         )
         self.collect_btn.pack(side=tk.LEFT, padx=(0, 10))
         
-        # Open folder button
         self.open_btn = tk.Button(
             action_frame,
             text="Open Folder",
@@ -133,7 +127,6 @@ The process will:
         )
         self.open_btn.pack(side=tk.LEFT, padx=(0, 10))
         
-        # Cancel button
         self.cancel_btn = tk.Button(
             action_frame,
             text="Cancel",
@@ -153,7 +146,6 @@ The process will:
         progress_frame = ttk.LabelFrame(parent, text="Progress", padding="10")
         progress_frame.pack(fill=tk.X, pady=(0, 10))
         
-        # Progress bar
         self.progress_var = tk.DoubleVar(value=0)
         self.progress = ttk.Progressbar(
             progress_frame,
@@ -163,15 +155,9 @@ The process will:
         )
         self.progress.pack(fill=tk.X, pady=(0, 5))
         
-        # Time estimate label
         self.time_var = tk.StringVar(value="Estimated time: ~10 minutes")
-        ttk.Label(
-            progress_frame,
-            textvariable=self.time_var,
-            font=('Segoe UI', 9)
-        ).pack(anchor=tk.W)
+        ttk.Label(progress_frame, textvariable=self.time_var, font=('Segoe UI', 9)).pack(anchor=tk.W)
         
-        # Status label
         self.status_var = tk.StringVar(value="Ready to start")
         self.status_label = ttk.Label(
             progress_frame,
@@ -194,11 +180,10 @@ The process will:
         )
         self.output_text.pack(fill=tk.BOTH, expand=True)
         
-        # Initial message
         self._log("Ready to collect Intune ODC logs.")
-        self._log("Click 'Start Collection' to begin.")
+        self._log("Click 'Start' to begin.")
         self._log("")
-        self._log("⚠️  This tool must be run as Administrator.")
+        self._log("Note: This tool must be run as Administrator.")
         
     def _log(self, message):
         """Add message to output"""
@@ -213,9 +198,283 @@ The process will:
         self.status_var.set(message)
         self._log(message)
         
+    def is_admin(self):
+        """Check if running as administrator"""
+        try:
+            import ctypes
+            return ctypes.windll.shell32.IsUserAnAdmin()
+        except:
+            return False
+            
+    def download_xml(self):
+        """Download Intune.XML from Microsoft"""
+        xml_path = os.path.join(self.log_dir, "Intune.xml")
+        url = "https://raw.githubusercontent.com/markstan/IntuneOneDataCollector/master/Intune.xml"
+        
+        self._update_status("Downloading Intune.XML...")
+        
+        try:
+            urllib.request.urlretrieve(url, xml_path)
+            self._log(f"Downloaded: {xml_path}")
+            return xml_path
+        except Exception as e:
+            self._log(f"Error downloading XML: {e}")
+            raise
+            
+    def parse_xml(self, xml_path):
+        """Parse the Intune XML file"""
+        self._update_status("Parsing Intune.XML...")
+        
+        try:
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            
+            # Find all packages
+            packages = []
+            for package in root.findall('.//Package'):
+                pkg_id = package.get('ID', 'Unknown')
+                packages.append((pkg_id, package))
+                
+            self._log(f"Found {len(packages)} package(s)")
+            return packages
+        except Exception as e:
+            self._log(f"Error parsing XML: {e}")
+            raise
+            
+    def collect_files(self, package_id, files_element):
+        """Collect files specified in XML"""
+        if files_element is None:
+            return
+            
+        files_collected = 0
+        
+        for file_elem in files_element.findall('.//File'):
+            if not self.is_running:
+                return
+                
+            file_path = file_elem.text
+            if not file_path:
+                continue
+                
+            # Expand environment variables
+            file_path = os.path.expandvars(file_path)
+            file_path = file_path.replace('"', '')
+            
+            team = file_elem.get('Team', 'General')
+            
+            if os.path.exists(file_path):
+                try:
+                    # Handle wildcards
+                    if '*' in file_path:
+                        import glob
+                        matched_files = glob.glob(file_path)
+                    else:
+                        matched_files = [file_path]
+                        
+                    for matched_file in matched_files:
+                        if os.path.isfile(matched_file):
+                            # Create destination directory
+                            dest_dir = os.path.join(self.result_dir, package_id, "Files", team)
+                            os.makedirs(dest_dir, exist_ok=True)
+                            
+                            # Copy file
+                            file_name = os.path.basename(matched_file)
+                            dest_name = f"{os.environ['COMPUTERNAME']}_{file_name}"
+                            dest_path = os.path.join(dest_dir, dest_name)
+                            
+                            shutil.copy2(matched_file, dest_path)
+                            files_collected += 1
+                            self._log(f"  Collected file: {file_name}")
+                            
+                except Exception as e:
+                    self._log(f"  Error collecting file {file_path}: {e}")
+                    
+        return files_collected
+        
+    def collect_registry(self, package_id, reg_element):
+        """Collect registry keys specified in XML"""
+        if reg_element is None:
+            return
+            
+        reg_collected = 0
+        
+        for reg_elem in reg_element.findall('.//Registry'):
+            if not self.is_running:
+                return
+                
+            reg_path = reg_elem.text
+            if not reg_path:
+                continue
+                
+            # Remove trailing wildcard
+            reg_path = reg_path.replace('\*', '')
+            
+            team = reg_elem.get('Team', 'General')
+            output_file = reg_elem.get('OutputFileName', reg_path.replace('\\', '_'))
+            
+            try:
+                # Create destination directory
+                dest_dir = os.path.join(self.result_dir, package_id, "RegistryKeys", team)
+                os.makedirs(dest_dir, exist_ok=True)
+                
+                # Export registry using reg.exe
+                output_name = f"{os.environ['COMPUTERNAME']}_{output_file}.txt"
+                dest_path = os.path.join(dest_dir, output_name)
+                
+                result = subprocess.run(
+                    ['reg', 'export', reg_path, dest_path, '/y', '/reg:64'],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    reg_collected += 1
+                    self._log(f"  Collected registry: {reg_path}")
+                else:
+                    self._log(f"  Error exporting registry: {reg_path}")
+                    
+            except Exception as e:
+                self._log(f"  Error collecting registry {reg_path}: {e}")
+                
+        return reg_collected
+        
+    def collect_eventlogs(self, package_id, evt_element):
+        """Collect event logs specified in XML"""
+        if evt_element is None:
+            return
+            
+        evt_collected = 0
+        
+        for evt_elem in evt_element.findall('.//EventLog'):
+            if not self.is_running:
+                return
+                
+            log_path = evt_elem.text
+            if not log_path:
+                continue
+                
+            log_path = os.path.expandvars(log_path)
+            team = evt_elem.get('Team', 'General')
+            
+            if os.path.exists(log_path):
+                try:
+                    # Handle wildcards
+                    if '*' in log_path:
+                        import glob
+                        matched_logs = glob.glob(log_path)
+                    else:
+                        matched_logs = [log_path]
+                        
+                    for matched_log in matched_logs:
+                        if os.path.isfile(matched_log):
+                            # Create destination directory
+                            dest_dir = os.path.join(self.result_dir, package_id, "EventLogs", team)
+                            os.makedirs(dest_dir, exist_ok=True)
+                            
+                            # Copy log
+                            log_name = os.path.basename(matched_log)
+                            dest_name = f"{os.environ['COMPUTERNAME']}_{log_name}"
+                            dest_path = os.path.join(dest_dir, dest_name)
+                            
+                            shutil.copy2(matched_log, dest_path)
+                            evt_collected += 1
+                            self._log(f"  Collected event log: {log_name}")
+                            
+                except Exception as e:
+                    self._log(f"  Error collecting event log {log_path}: {e}")
+                    
+        return evt_collected
+        
+    def collect_commands(self, package_id, cmd_element):
+        """Run and collect command outputs specified in XML"""
+        if cmd_element is None:
+            return
+            
+        cmd_collected = 0
+        
+        for cmd_elem in cmd_element.findall('.//Command'):
+            if not self.is_running:
+                return
+                
+            cmd_type = cmd_elem.get('Type', 'PS')
+            cmd_text = cmd_elem.text
+            
+            if not cmd_text:
+                continue
+                
+            team = cmd_elem.get('Team', 'General')
+            output_file = cmd_elem.get('OutputFileName', 'output')
+            
+            if output_file == "NA":
+                continue
+                
+            try:
+                # Create destination directory
+                dest_dir = os.path.join(self.result_dir, package_id, "Commands", team)
+                os.makedirs(dest_dir, exist_ok=True)
+                
+                # Run command and capture output
+                output_name = f"{os.environ['COMPUTERNAME']}_{output_file}.txt"
+                dest_path = os.path.join(dest_dir, output_name)
+                
+                if cmd_type.upper() == "PS":
+                    # Run PowerShell command
+                    result = subprocess.run(
+                        ['powershell', '-Command', cmd_text],
+                        capture_output=True,
+                        text=True,
+                        timeout=60
+                    )
+                    output = result.stdout + result.stderr
+                elif cmd_type.upper() == "CMD":
+                    # Run CMD command
+                    result = subprocess.run(
+                        cmd_text,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=60
+                    )
+                    output = result.stdout + result.stderr
+                else:
+                    continue
+                    
+                # Write output to file
+                with open(dest_path, 'w') as f:
+                    f.write(output)
+                    
+                cmd_collected += 1
+                self._log(f"  Collected command output: {cmd_text[:50]}...")
+                
+            except Exception as e:
+                self._log(f"  Error running command: {e}")
+                
+        return cmd_collected
+        
+    def create_zip(self):
+        """Create ZIP file from collected data"""
+        self._update_status("Creating ZIP file...")
+        
+        timestamp = datetime.utcnow().strftime("%m_%d_%Y_%H_%M_UTC")
+        zip_name = f"{os.environ['COMPUTERNAME']}_CollectedData_{timestamp}.zip"
+        zip_path = os.path.join(self.log_dir, zip_name)
+        
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for root, dirs, files in os.walk(self.result_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        arcname = os.path.relpath(file_path, self.result_dir)
+                        zipf.write(file_path, arcname)
+                        
+            self._log(f"Created ZIP: {zip_name}")
+            return zip_path
+        except Exception as e:
+            self._log(f"Error creating ZIP: {e}")
+            raise
+            
     def start_collection(self):
         """Start the log collection process"""
-        # Check if running as admin
         if not self.is_admin():
             messagebox.showerror(
                 "Administrator Required",
@@ -224,12 +483,11 @@ The process will:
             )
             return
             
-        # Confirm start
         result = messagebox.askyesno(
             "Start Collection",
             "This will collect Intune diagnostic logs.\n\n"
             "The process takes approximately 10 minutes.\n"
-            "Output will be saved to: C:\\IntuneODCLogs\n\n"
+            f"Output will be saved to: {self.log_dir}\n\n"
             "Do you want to continue?"
         )
         if not result:
@@ -241,6 +499,8 @@ The process will:
         self.cancel_btn.config(state=tk.NORMAL)
         self.open_btn.config(state=tk.DISABLED)
         self.progress_var.set(0)
+        self.output_text.config(state=tk.NORMAL)
+        self.output_text.delete(1.0, tk.END)
         
         # Start collection in thread
         thread = threading.Thread(target=self._collection_thread)
@@ -250,168 +510,96 @@ The process will:
     def _collection_thread(self):
         """Run collection in background thread"""
         try:
-            log_dir = r"C:\IntuneODCLogs"
-            
-            # Get path to embedded PowerShell script
-            if getattr(sys, 'frozen', False):
-                # Running in PyInstaller bundle
-                base_dir = Path(sys.executable).parent
-            else:
-                # Running in normal Python
-                base_dir = Path(__file__).parent
-            
-            ps_script_source = base_dir / "IntuneODCStandAlone.ps1"
-            ps_script_dest = Path(log_dir) / "IntuneODCStandAlone.ps1"
-            
-            # Step 1: Create directory
-            self._update_status("Creating log directory...")
-            self._run_command(f'cmd /c "md {log_dir} 2>nul || echo Directory exists"')
+            # Create directories
+            self._update_status("Creating directories...")
+            os.makedirs(self.log_dir, exist_ok=True)
+            self.result_dir = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), 'CollectedData')
+            if os.path.exists(self.result_dir):
+                shutil.rmtree(self.result_dir)
+            os.makedirs(self.result_dir, exist_ok=True)
             self.progress_var.set(10)
             
-            # Step 2: Download Intune.xml
-            self._update_status("Downloading Intune.xml...")
-            self._run_command(
-                f'powershell -Command "Set-Location {log_dir}; '
-                f'Invoke-WebRequest -Uri https://aka.ms/intunexml -OutFile Intune.xml -UseBasicParsing"'
-            )
+            # Download XML
+            xml_path = self.download_xml()
             self.progress_var.set(25)
             
-            # Step 3: Copy embedded PowerShell script
-            self._update_status("Extracting embedded PowerShell script...")
-            if ps_script_source.exists():
-                import shutil
-                shutil.copy(str(ps_script_source), str(ps_script_dest))
-                self._log(f"Copied embedded script to {ps_script_dest}")
-            else:
-                self._log(f"Warning: Embedded script not found at {ps_script_source}")
-                self._log("Falling back to download...")
-                self._run_command(
-                    f'powershell -Command "Set-Location {log_dir}; '
-                    f'Invoke-WebRequest -Uri https://aka.ms/intuneps1 -OutFile IntuneODCStandAlone.ps1 -UseBasicParsing"'
-                )
-            self.progress_var.set(40)
+            # Parse XML
+            packages = self.parse_xml(xml_path)
+            self.progress_var.set(30)
             
-            # Step 4: Run the collection script
-            self._update_status("Collecting Intune logs (this takes ~10 minutes)...")
-            self._update_status("Please wait, gathering diagnostic information...")
+            # Process each package
+            total_packages = len(packages)
+            for i, (pkg_id, package) in enumerate(packages):
+                if not self.is_running:
+                    return
+                    
+                self._update_status(f"Processing package: {pkg_id}")
+                
+                # Collect files
+                files_elem = package.find('Files')
+                if files_elem is not None:
+                    self.collect_files(pkg_id, files_elem)
+                    
+                # Collect registry
+                reg_elem = package.find('Registries')
+                if reg_elem is not None:
+                    self.collect_registry(pkg_id, reg_elem)
+                    
+                # Collect event logs
+                evt_elem = package.find('EventLogs')
+                if evt_elem is not None:
+                    self.collect_eventlogs(pkg_id, evt_elem)
+                    
+                # Collect commands
+                cmd_elem = package.find('Commands')
+                if cmd_elem is not None:
+                    self.collect_commands(pkg_id, cmd_elem)
+                    
+                progress = 30 + (i + 1) / total_packages * 60
+                self.progress_var.set(int(progress))
+                
+            # Create ZIP
+            zip_path = self.create_zip()
+            self.progress_var.set(100)
             
-            # Run the main collection
-            result = self._run_command(
-                f'powershell -ExecutionPolicy Bypass -File "{log_dir}\\IntuneODCStandAlone.ps1"',
-                timeout=600  # 10 minute timeout
+            # Cleanup
+            if os.path.exists(self.result_dir):
+                shutil.rmtree(self.result_dir)
+                
+            self._update_status("Collection complete!")
+            self.open_btn.config(state=tk.NORMAL)
+            
+            messagebox.showinfo(
+                "Collection Complete",
+                f"Intune ODC logs have been collected!\n\n"
+                f"Location: {zip_path}"
             )
             
-            self.progress_var.set(90)
-            
-            # Step 5: Check for output
-            self._update_status("Checking for output files...")
-            self._check_output_files(log_dir)
-            
-            self.progress_var.set(100)
-            self._update_status("✅ Collection complete!")
-            
-            # Enable open folder button
-            self.root.after(0, lambda: self.open_btn.config(state=tk.NORMAL))
-            
-            # Show completion message
-            self.root.after(0, lambda: messagebox.showinfo(
-                "Collection Complete",
-                "Intune ODC logs have been collected successfully!\n\n"
-                f"Location: {log_dir}\n\n"
-                "You can now open the log folder to find the ZIP file."
-            ))
-            
         except Exception as e:
-            self._update_status(f"❌ Error: {str(e)}")
-            self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
+            self._update_status(f"Error: {str(e)}")
+            messagebox.showerror("Error", str(e))
         finally:
             self.is_running = False
-            self.root.after(0, self._collection_finished)
+            self.collect_btn.config(state=tk.NORMAL)
+            self.cancel_btn.config(state=tk.DISABLED)
             
-    def _run_command(self, command, timeout=None):
-        """Run a shell command and return output"""
-        try:
-            self._log(f"Running: {command[:80]}...")
-            
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout
-            )
-            
-            if result.stdout:
-                for line in result.stdout.strip().split('\n'):
-                    if line.strip():
-                        self._log(f"  {line.strip()}")
-                        
-            if result.stderr:
-                for line in result.stderr.strip().split('\n'):
-                    if line.strip():
-                        self._log(f"  ! {line.strip()}")
-                        
-            return result
-            
-        except subprocess.TimeoutExpired:
-            self._log("  Command timed out (this is normal for long operations)")
-            return None
-        except Exception as e:
-            self._log(f"  Error: {str(e)}")
-            raise
-            
-    def _check_output_files(self, log_dir):
-        """Check for and list output files"""
-        try:
-            if os.path.exists(log_dir):
-                files = os.listdir(log_dir)
-                self._log(f"Files in {log_dir}:")
-                for f in files:
-                    file_path = os.path.join(log_dir, f)
-                    size = os.path.getsize(file_path)
-                    size_mb = size / (1024 * 1024)
-                    self._log(f"  - {f} ({size_mb:.2f} MB)")
-        except Exception as e:
-            self._log(f"Could not list files: {e}")
-            
-    def _collection_finished(self):
-        """Called when collection finishes"""
-        self.collect_btn.config(state=tk.NORMAL)
-        self.cancel_btn.config(state=tk.DISABLED)
-        self.time_var.set("Collection finished")
-        
     def cancel_collection(self):
         """Cancel the collection process"""
         if self.is_running:
             result = messagebox.askyesno(
                 "Cancel Collection",
-                "Are you sure you want to cancel?\n\n"
-                "The collection process will be terminated."
+                "Are you sure you want to cancel?"
             )
             if result:
                 self.is_running = False
-                self._update_status("⚠️  Collection cancelled by user")
-                self._collection_finished()
+                self._update_status("Collection cancelled")
                 
     def open_log_folder(self):
         """Open the log folder in Explorer"""
-        log_dir = r"C:\IntuneODCLogs"
-        if os.path.exists(log_dir):
-            os.startfile(log_dir)
+        if os.path.exists(self.log_dir):
+            os.startfile(self.log_dir)
         else:
-            messagebox.showwarning(
-                "Folder Not Found",
-                f"Log folder not found: {log_dir}\n\n"
-                "The collection may not have completed successfully."
-            )
-            
-    def is_admin(self):
-        """Check if running as administrator"""
-        try:
-            import ctypes
-            return ctypes.windll.shell32.IsUserAnAdmin()
-        except:
-            return False
+            messagebox.showwarning("Not Found", f"Folder not found: {self.log_dir}")
             
     def run(self):
         """Run the application"""
@@ -419,7 +607,6 @@ The process will:
 
 
 def main():
-    """Main entry point"""
     app = ODCLogCollector()
     app.run()
 

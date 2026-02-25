@@ -1,25 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import sys
-from pathlib import Path
-
 block_cipher = None
-
-# Include PowerShell script as data file
-datas = [
-    ('IntuneODCStandAlone.ps1', '.'),
-]
 
 a = Analysis(
     ['main.py'],
-    pathex=[str(Path('.'))],
+    pathex=[],
     binaries=[],
-    datas=datas,
+    datas=[],
     hiddenimports=[
         'tkinter',
         'tkinter.ttk',
         'tkinter.messagebox',
         'tkinter.scrolledtext',
+        'urllib.request',
+        'xml.etree.ElementTree',
+        'zipfile',
+        'winreg',
     ],
     hookspath=[],
     hooksconfig={},
