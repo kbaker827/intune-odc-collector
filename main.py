@@ -577,14 +577,20 @@ Note: This tool must be run as Administrator."""
                 # If command is too long, write to temp file and execute
                 MAX_CMD_LENGTH = 7000  # Leave some margin
                 
-                if cmd_type.upper() == "PS":
-                    # Define RunCommand function that may be referenced in commands
-                    RUNCOMMAND_FUNCTION = '''
+                # Enhanced RunCommand function with better output handling
+                RUNCOMMAND_FUNCTION = '''
 function RunCommand($cmdToRun) {
-    Write-Host "Executing: $cmdToRun"
+    Write-Host "=== Executing: $cmdToRun ==="
     try {
-        $output = Invoke-Expression $cmdToRun 2>&1
-        $output | Out-String
+        if ($cmdToRun -match "^\s*[a-zA-Z0-9_-]+\.exe" -or $cmdToRun -match "^\s*[a-zA-Z0-9_-]+\.cmd" -or $cmdToRun -match "^\s*[a-zA-Z0-9_-]+\.bat") {
+            # CMD-style command (executable)
+            $output = cmd /c $cmdToRun 2>&1
+        } else {
+            # PowerShell command
+            $output = Invoke-Expression $cmdToRun 2>&1
+        }
+        $outputString = $output | Out-String
+        Write-Output $outputString
     }
     catch {
         Write-Error "Error executing command: $_"
@@ -592,49 +598,47 @@ function RunCommand($cmdToRun) {
 }
 
 '''
-                    if len(cmd_text) > MAX_CMD_LENGTH or 'RunCommand' in cmd_text:
-                        # Write to temp script file with RunCommand function
-                        temp_script = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), f"odc_cmd_{cmd_collected}.ps1")
-                        with open(temp_script, 'w', encoding='utf-8') as f:
-                            f.write(RUNCOMMAND_FUNCTION)
-                            f.write(cmd_text)
-                        
-                        # Execute the script file instead
-                        result = subprocess.run(
-                            ['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_script],
-                            capture_output=True,
-                            text=True,
-                            timeout=60
-                        )
-                        # Clean up temp file
-                        try:
-                            os.remove(temp_script)
-                        except:
-                            pass
-                    else:
-                        # Run PowerShell command directly
-                        result = subprocess.run(
-                            ['powershell', '-Command', cmd_text],
-                            capture_output=True,
-                            text=True,
-                            timeout=60
-                        )
+                    
+                    # Always use temp script for better reliability
+                    temp_script = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), f"odc_cmd_{cmd_collected}.ps1")
+                    with open(temp_script, 'w', encoding='utf-8') as f:
+                        f.write(RUNCOMMAND_FUNCTION)
+                        # Also add helper for direct execution
+                        f.write('\n# Execute command(s)\n')
+                        f.write(cmd_text)
+                        f.write('\n')
+                    
+                    # Execute the script file
+                    result = subprocess.run(
+                        ['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_script],
+                        capture_output=True,
+                        text=True,
+                        timeout=120  # Increased timeout for system info commands
+                    )
+                    
+                    # Clean up temp file
+                    try:
+                        os.remove(temp_script)
+                    except:
+                        pass
+                    
                     output = result.stdout + result.stderr
                     
                 elif cmd_type.upper() == "CMD":
+                    # For CMD type, execute via cmd.exe
                     if len(cmd_text) > MAX_CMD_LENGTH:
                         # Write to temp batch file
                         temp_script = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), f"odc_cmd_{cmd_collected}.cmd")
                         with open(temp_script, 'w', encoding='utf-8') as f:
+                            f.write('@echo off\n')
                             f.write(cmd_text)
                         
                         # Execute the batch file
                         result = subprocess.run(
-                            [temp_script],
-                            shell=True,
+                            ['cmd', '/c', temp_script],
                             capture_output=True,
                             text=True,
-                            timeout=60
+                            timeout=120
                         )
                         # Clean up temp file
                         try:
@@ -642,13 +646,12 @@ function RunCommand($cmdToRun) {
                         except:
                             pass
                     else:
-                        # Run CMD command directly
+                        # Run CMD command via cmd.exe
                         result = subprocess.run(
-                            cmd_text,
-                            shell=True,
+                            ['cmd', '/c', cmd_text],
                             capture_output=True,
                             text=True,
-                            timeout=60
+                            timeout=120
                         )
                     output = result.stdout + result.stderr
                 else:
