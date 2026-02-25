@@ -111,6 +111,7 @@ The process will:
             command=self.start_collection,
             bg='#007bff',
             fg='white',
+            disabledforeground='white',
             font=('Segoe UI', 11, 'bold'),
             width=10,
             cursor='hand2'
@@ -124,6 +125,7 @@ The process will:
             command=self.open_log_folder,
             bg='#6c757d',
             fg='white',
+            disabledforeground='white',
             font=('Segoe UI', 10),
             width=12,
             cursor='hand2',
@@ -138,6 +140,7 @@ The process will:
             command=self.cancel_collection,
             bg='#dc3545',
             fg='white',
+            disabledforeground='white',
             font=('Segoe UI', 10),
             width=10,
             cursor='hand2',
