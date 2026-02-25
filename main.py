@@ -497,24 +497,68 @@ Note: This tool must be run as Administrator."""
                 output_name = f"{os.environ['COMPUTERNAME']}_{output_file}.txt"
                 dest_path = os.path.join(dest_dir, output_name)
                 
+                # Windows command line limit is ~8191 characters
+                # If command is too long, write to temp file and execute
+                MAX_CMD_LENGTH = 7000  # Leave some margin
+                
                 if cmd_type.upper() == "PS":
-                    # Run PowerShell command
-                    result = subprocess.run(
-                        ['powershell', '-Command', cmd_text],
-                        capture_output=True,
-                        text=True,
-                        timeout=60
-                    )
+                    if len(cmd_text) > MAX_CMD_LENGTH:
+                        # Write to temp script file
+                        temp_script = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), f"odc_cmd_{cmd_collected}.ps1")
+                        with open(temp_script, 'w', encoding='utf-8') as f:
+                            f.write(cmd_text)
+                        
+                        # Execute the script file instead
+                        result = subprocess.run(
+                            ['powershell', '-ExecutionPolicy', 'Bypass', '-File', temp_script],
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
+                        # Clean up temp file
+                        try:
+                            os.remove(temp_script)
+                        except:
+                            pass
+                    else:
+                        # Run PowerShell command directly
+                        result = subprocess.run(
+                            ['powershell', '-Command', cmd_text],
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
                     output = result.stdout + result.stderr
+                    
                 elif cmd_type.upper() == "CMD":
-                    # Run CMD command
-                    result = subprocess.run(
-                        cmd_text,
-                        shell=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=60
-                    )
+                    if len(cmd_text) > MAX_CMD_LENGTH:
+                        # Write to temp batch file
+                        temp_script = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), f"odc_cmd_{cmd_collected}.cmd")
+                        with open(temp_script, 'w', encoding='utf-8') as f:
+                            f.write(cmd_text)
+                        
+                        # Execute the batch file
+                        result = subprocess.run(
+                            [temp_script],
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
+                        # Clean up temp file
+                        try:
+                            os.remove(temp_script)
+                        except:
+                            pass
+                    else:
+                        # Run CMD command directly
+                        result = subprocess.run(
+                            cmd_text,
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
                     output = result.stdout + result.stderr
                 else:
                     continue
