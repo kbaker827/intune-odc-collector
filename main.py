@@ -920,7 +920,7 @@ function RunCommand($cmdToRun) {
         if os.path.exists(self.log_dir):
             os.startfile(self.log_dir)
         else:
-            messagebox.showwarning("Not Found", f"Folder not found: {self.log_dir}"
+            messagebox.showwarning("Not Found", "Folder not found: " + self.log_dir)
             
     def run(self):
         """Run the application"""
