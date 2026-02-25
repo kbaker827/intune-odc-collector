@@ -232,41 +232,35 @@ Note: This tool must be run as Administrator."""
             # Debug: log the root element
             self._log(f"XML Root: {root.tag}")
             
-            # Find all packages - handle namespace if present
-            # Try multiple methods to find packages
+            # Extract namespace if present
+            ns = {}
+            if '}' in root.tag:
+                ns_uri = root.tag.split('}')[0].strip('{')
+                ns = {'ns': ns_uri}
+                self._log(f"Detected namespace: {ns_uri}")
+            
+            # Find all packages
             packages = []
             
-            # Method 1: Direct DataPoints/Package path (original PowerShell way)
-            datapoints = root.find('DataPoints')
-            if datapoints is not None:
-                self._log("Found DataPoints element")
-                for package in datapoints.findall('Package'):
+            # Method 1: Try with namespace
+            if ns:
+                for package in root.findall('.//ns:Package', ns):
                     pkg_id = package.get('ID', 'Unknown')
                     packages.append((pkg_id, package))
                     self._log(f"  Found package: {pkg_id}")
             
-            # Method 2: Recursive search with namespace handling
+            # Method 2: Try without namespace
             if not packages:
-                # Try with namespace
-                ns = {'': root.tag.split('}')[0].strip('{') if '}' in root.tag else ''}
-                if ns['']:
-                    self._log(f"Detected namespace: {ns['']}")
-                    for package in root.findall('.//ns:Package', ns):
-                        pkg_id = package.get('ID', 'Unknown')
-                        packages.append((pkg_id, package))
-                        self._log(f"  Found package: {pkg_id}")
-                else:
-                    # No namespace, try direct findall
-                    for package in root.findall('.//Package'):
-                        pkg_id = package.get('ID', 'Unknown')
-                        packages.append((pkg_id, package))
-                        self._log(f"  Found package: {pkg_id}")
+                for package in root.findall('.//Package'):
+                    pkg_id = package.get('ID', 'Unknown')
+                    packages.append((pkg_id, package))
+                    self._log(f"  Found package: {pkg_id}")
             
             # Method 3: Search all children recursively
             if not packages:
                 self._log("Trying recursive search...")
                 for elem in root.iter():
-                    if elem.tag.endswith('Package') or elem.tag == 'Package':
+                    if 'Package' in elem.tag and elem.tag.endswith('Package'):
                         pkg_id = elem.get('ID', 'Unknown')
                         packages.append((pkg_id, elem))
                         self._log(f"  Found package: {pkg_id}")
@@ -593,6 +587,14 @@ Note: This tool must be run as Administrator."""
             packages = self.parse_xml(xml_path)
             self.progress_var.set(30)
             
+            # Determine namespace from first package if available
+            ns_uri = None
+            if packages:
+                first_pkg = packages[0][1]
+                if '}' in first_pkg.tag:
+                    ns_uri = first_pkg.tag.split('}')[0].strip('{')
+            ns_map = {'ns': ns_uri} if ns_uri else {}
+            
             # Process each package
             total_packages = len(packages)
             for i, (pkg_id, package) in enumerate(packages):
@@ -601,37 +603,46 @@ Note: This tool must be run as Administrator."""
                     
                 self._update_status(f"Processing package: {pkg_id}")
                 
+                # Helper function to find child element with namespace handling
+                def find_child(parent, tag_name):
+                    # Try with namespace
+                    if ns_map:
+                        child = parent.find(f'ns:{tag_name}', ns_map)
+                        if child is not None:
+                            return child
+                    # Try without namespace
+                    child = parent.find(tag_name)
+                    if child is not None:
+                        return child
+                    # Try by checking tag ending
+                    for child in parent:
+                        if child.tag.endswith(tag_name):
+                            return child
+                    return None
+                
                 # Collect files
-                files_elem = package.find('Files')
-                if files_elem is None:
-                    files_elem = next((child for child in package if child.tag.endswith('Files')), None)
+                files_elem = find_child(package, 'Files')
                 if files_elem is not None:
                     count = self.collect_files(pkg_id, files_elem)
                     if count:
                         self._log(f"  Collected {count} files")
                     
                 # Collect registry
-                reg_elem = package.find('Registries')
-                if reg_elem is None:
-                    reg_elem = next((child for child in package if child.tag.endswith('Registries')), None)
+                reg_elem = find_child(package, 'Registries')
                 if reg_elem is not None:
                     count = self.collect_registry(pkg_id, reg_elem)
                     if count:
                         self._log(f"  Collected {count} registry keys")
                     
                 # Collect event logs
-                evt_elem = package.find('EventLogs')
-                if evt_elem is None:
-                    evt_elem = next((child for child in package if child.tag.endswith('EventLogs')), None)
+                evt_elem = find_child(package, 'EventLogs')
                 if evt_elem is not None:
                     count = self.collect_eventlogs(pkg_id, evt_elem)
                     if count:
                         self._log(f"  Collected {count} event logs")
                     
                 # Collect commands
-                cmd_elem = package.find('Commands')
-                if cmd_elem is None:
-                    cmd_elem = next((child for child in package if child.tag.endswith('Commands')), None)
+                cmd_elem = find_child(package, 'Commands')
                 if cmd_elem is not None:
                     count = self.collect_commands(pkg_id, cmd_elem)
                     if count:
