@@ -85,8 +85,8 @@ class ODCLogCollector:
 
 The process will:
 1. Create directory: C:\IntuneODCLogs
-2. Download Microsoft diagnostic scripts
-3. Collect Intune configuration and logs (takes ~10 minutes)
+2. Download Intune.XML configuration from Microsoft
+3. Collect Intune configuration and logs using embedded PowerShell script (takes ~10 minutes)
 4. Create a compressed ZIP file with all data
 
 ⚠️  Note: This tool must be run as Administrator."""
@@ -252,6 +252,17 @@ The process will:
         try:
             log_dir = r"C:\IntuneODCLogs"
             
+            # Get path to embedded PowerShell script
+            if getattr(sys, 'frozen', False):
+                # Running in PyInstaller bundle
+                base_dir = Path(sys.executable).parent
+            else:
+                # Running in normal Python
+                base_dir = Path(__file__).parent
+            
+            ps_script_source = base_dir / "IntuneODCStandAlone.ps1"
+            ps_script_dest = Path(log_dir) / "IntuneODCStandAlone.ps1"
+            
             # Step 1: Create directory
             self._update_status("Creating log directory...")
             self._run_command(f'cmd /c "md {log_dir} 2>nul || echo Directory exists"')
@@ -261,16 +272,23 @@ The process will:
             self._update_status("Downloading Intune.xml...")
             self._run_command(
                 f'powershell -Command "Set-Location {log_dir}; '
-                f'wget https://aka.ms/intunexml -OutFile Intune.xml"'
+                f'Invoke-WebRequest -Uri https://aka.ms/intunexml -OutFile Intune.xml -UseBasicParsing"'
             )
             self.progress_var.set(25)
             
-            # Step 3: Download PowerShell script
-            self._update_status("Downloading IntuneODCStandAlone.ps1...")
-            self._run_command(
-                f'powershell -Command "Set-Location {log_dir}; '
-                f'wget https://aka.ms/intuneps1 -OutFile IntuneODCStandAlone.ps1"'
-            )
+            # Step 3: Copy embedded PowerShell script
+            self._update_status("Extracting embedded PowerShell script...")
+            if ps_script_source.exists():
+                import shutil
+                shutil.copy(str(ps_script_source), str(ps_script_dest))
+                self._log(f"Copied embedded script to {ps_script_dest}")
+            else:
+                self._log(f"Warning: Embedded script not found at {ps_script_source}")
+                self._log("Falling back to download...")
+                self._run_command(
+                    f'powershell -Command "Set-Location {log_dir}; '
+                    f'Invoke-WebRequest -Uri https://aka.ms/intuneps1 -OutFile IntuneODCStandAlone.ps1 -UseBasicParsing"'
+                )
             self.progress_var.set(40)
             
             # Step 4: Run the collection script
