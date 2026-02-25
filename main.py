@@ -22,8 +22,8 @@ class ODCLogCollector:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Intune ODC Log Collector")
-        self.root.geometry("700x600")
-        self.root.minsize(600, 500)
+        self.root.geometry("750x600")
+        self.root.minsize(750, 500)
         
         # Set DPI awareness on Windows
         if sys.platform == 'win32':
@@ -107,13 +107,12 @@ The process will:
         # Collect button
         self.collect_btn = tk.Button(
             action_frame,
-            text="📥 Start Collection",
+            text="Start",
             command=self.start_collection,
             bg='#007bff',
             fg='white',
             font=('Segoe UI', 11, 'bold'),
-            padx=20,
-            pady=10,
+            width=10,
             cursor='hand2'
         )
         self.collect_btn.pack(side=tk.LEFT, padx=(0, 10))
@@ -121,13 +120,12 @@ The process will:
         # Open folder button
         self.open_btn = tk.Button(
             action_frame,
-            text="📂 Open Log Folder",
+            text="Open Folder",
             command=self.open_log_folder,
             bg='#6c757d',
             fg='white',
             font=('Segoe UI', 10),
-            padx=15,
-            pady=8,
+            width=12,
             cursor='hand2',
             state=tk.DISABLED
         )
@@ -136,13 +134,12 @@ The process will:
         # Cancel button
         self.cancel_btn = tk.Button(
             action_frame,
-            text="✕ Cancel",
+            text="Cancel",
             command=self.cancel_collection,
             bg='#dc3545',
             fg='white',
             font=('Segoe UI', 10),
-            padx=15,
-            pady=8,
+            width=10,
             cursor='hand2',
             state=tk.DISABLED
         )
