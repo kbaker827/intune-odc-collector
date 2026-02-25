@@ -229,28 +229,73 @@ Note: This tool must be run as Administrator."""
             tree = ET.parse(xml_path)
             root = tree.getroot()
             
-            # Find all packages
+            # Debug: log the root element
+            self._log(f"XML Root: {root.tag}")
+            
+            # Find all packages - handle namespace if present
+            # Try multiple methods to find packages
             packages = []
-            for package in root.findall('.//Package'):
-                pkg_id = package.get('ID', 'Unknown')
-                packages.append((pkg_id, package))
+            
+            # Method 1: Direct DataPoints/Package path (original PowerShell way)
+            datapoints = root.find('DataPoints')
+            if datapoints is not None:
+                self._log("Found DataPoints element")
+                for package in datapoints.findall('Package'):
+                    pkg_id = package.get('ID', 'Unknown')
+                    packages.append((pkg_id, package))
+                    self._log(f"  Found package: {pkg_id}")
+            
+            # Method 2: Recursive search with namespace handling
+            if not packages:
+                # Try with namespace
+                ns = {'': root.tag.split('}')[0].strip('{') if '}' in root.tag else ''}
+                if ns['']:
+                    self._log(f"Detected namespace: {ns['']}")
+                    for package in root.findall('.//ns:Package', ns):
+                        pkg_id = package.get('ID', 'Unknown')
+                        packages.append((pkg_id, package))
+                        self._log(f"  Found package: {pkg_id}")
+                else:
+                    # No namespace, try direct findall
+                    for package in root.findall('.//Package'):
+                        pkg_id = package.get('ID', 'Unknown')
+                        packages.append((pkg_id, package))
+                        self._log(f"  Found package: {pkg_id}")
+            
+            # Method 3: Search all children recursively
+            if not packages:
+                self._log("Trying recursive search...")
+                for elem in root.iter():
+                    if elem.tag.endswith('Package') or elem.tag == 'Package':
+                        pkg_id = elem.get('ID', 'Unknown')
+                        packages.append((pkg_id, elem))
+                        self._log(f"  Found package: {pkg_id}")
                 
-            self._log(f"Found {len(packages)} package(s)")
+            self._log(f"Total packages found: {len(packages)}")
             return packages
         except Exception as e:
             self._log(f"Error parsing XML: {e}")
+            import traceback
+            self._log(traceback.format_exc())
             raise
             
     def collect_files(self, package_id, files_element):
         """Collect files specified in XML"""
         if files_element is None:
-            return
+            return 0
             
         files_collected = 0
         
-        for file_elem in files_element.findall('.//File'):
+        # Find all File elements
+        file_elems = list(files_element.iter('File'))
+        if not file_elems:
+            file_elems = files_element.findall('File')
+            
+        self._log(f"  Processing {len(file_elems)} file entries...")
+        
+        for file_elem in file_elems:
             if not self.is_running:
-                return
+                return files_collected
                 
             file_path = file_elem.text
             if not file_path:
@@ -294,11 +339,18 @@ Note: This tool must be run as Administrator."""
     def collect_registry(self, package_id, reg_element):
         """Collect registry keys specified in XML"""
         if reg_element is None:
-            return
+            return 0
             
         reg_collected = 0
         
-        for reg_elem in reg_element.findall('.//Registry'):
+        # Find all Registry elements
+        reg_elems = list(reg_element.iter('Registry'))
+        if not reg_elems:
+            reg_elems = reg_element.findall('Registry')
+            
+        self._log(f"  Processing {len(reg_elems)} registry entries...")
+        
+        for reg_elem in reg_elems:
             if not self.is_running:
                 return
                 
@@ -341,11 +393,18 @@ Note: This tool must be run as Administrator."""
     def collect_eventlogs(self, package_id, evt_element):
         """Collect event logs specified in XML"""
         if evt_element is None:
-            return
+            return 0
             
         evt_collected = 0
         
-        for evt_elem in evt_element.findall('.//EventLog'):
+        # Find all EventLog elements
+        evt_elems = list(evt_element.iter('EventLog'))
+        if not evt_elems:
+            evt_elems = evt_element.findall('EventLog')
+            
+        self._log(f"  Processing {len(evt_elems)} event log entries...")
+        
+        for evt_elem in evt_elems:
             if not self.is_running:
                 return
                 
@@ -388,11 +447,18 @@ Note: This tool must be run as Administrator."""
     def collect_commands(self, package_id, cmd_element):
         """Run and collect command outputs specified in XML"""
         if cmd_element is None:
-            return
+            return 0
             
         cmd_collected = 0
         
-        for cmd_elem in cmd_element.findall('.//Command'):
+        # Find all Command elements
+        cmd_elems = list(cmd_element.iter('Command'))
+        if not cmd_elems:
+            cmd_elems = cmd_element.findall('Command')
+            
+        self._log(f"  Processing {len(cmd_elems)} command entries...")
+        
+        for cmd_elem in cmd_elems:
             if not self.is_running:
                 return
                 
@@ -537,23 +603,39 @@ Note: This tool must be run as Administrator."""
                 
                 # Collect files
                 files_elem = package.find('Files')
+                if files_elem is None:
+                    files_elem = next((child for child in package if child.tag.endswith('Files')), None)
                 if files_elem is not None:
-                    self.collect_files(pkg_id, files_elem)
+                    count = self.collect_files(pkg_id, files_elem)
+                    if count:
+                        self._log(f"  Collected {count} files")
                     
                 # Collect registry
                 reg_elem = package.find('Registries')
+                if reg_elem is None:
+                    reg_elem = next((child for child in package if child.tag.endswith('Registries')), None)
                 if reg_elem is not None:
-                    self.collect_registry(pkg_id, reg_elem)
+                    count = self.collect_registry(pkg_id, reg_elem)
+                    if count:
+                        self._log(f"  Collected {count} registry keys")
                     
                 # Collect event logs
                 evt_elem = package.find('EventLogs')
+                if evt_elem is None:
+                    evt_elem = next((child for child in package if child.tag.endswith('EventLogs')), None)
                 if evt_elem is not None:
-                    self.collect_eventlogs(pkg_id, evt_elem)
+                    count = self.collect_eventlogs(pkg_id, evt_elem)
+                    if count:
+                        self._log(f"  Collected {count} event logs")
                     
                 # Collect commands
                 cmd_elem = package.find('Commands')
+                if cmd_elem is None:
+                    cmd_elem = next((child for child in package if child.tag.endswith('Commands')), None)
                 if cmd_elem is not None:
-                    self.collect_commands(pkg_id, cmd_elem)
+                    count = self.collect_commands(pkg_id, cmd_elem)
+                    if count:
+                        self._log(f"  Collected {count} command outputs")
                     
                 progress = 30 + (i + 1) / total_packages * 60
                 self.progress_var.set(int(progress))
