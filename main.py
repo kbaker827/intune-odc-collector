@@ -502,10 +502,25 @@ Note: This tool must be run as Administrator."""
                 MAX_CMD_LENGTH = 7000  # Leave some margin
                 
                 if cmd_type.upper() == "PS":
-                    if len(cmd_text) > MAX_CMD_LENGTH:
-                        # Write to temp script file
+                    # Define RunCommand function that may be referenced in commands
+                    RUNCOMMAND_FUNCTION = '''
+function RunCommand($cmdToRun) {
+    Write-Host "Executing: $cmdToRun"
+    try {
+        $output = Invoke-Expression $cmdToRun 2>&1
+        $output | Out-String
+    }
+    catch {
+        Write-Error "Error executing command: $_"
+    }
+}
+
+'''
+                    if len(cmd_text) > MAX_CMD_LENGTH or 'RunCommand' in cmd_text:
+                        # Write to temp script file with RunCommand function
                         temp_script = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), f"odc_cmd_{cmd_collected}.ps1")
                         with open(temp_script, 'w', encoding='utf-8') as f:
+                            f.write(RUNCOMMAND_FUNCTION)
                             f.write(cmd_text)
                         
                         # Execute the script file instead
