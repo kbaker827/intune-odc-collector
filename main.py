@@ -273,17 +273,22 @@ Note: This tool must be run as Administrator."""
             self._log(traceback.format_exc())
             raise
             
-    def collect_files(self, package_id, files_element):
+    def collect_files(self, package_id, files_element, ns_map=None):
         """Collect files specified in XML"""
         if files_element is None:
             return 0
             
         files_collected = 0
         
-        # Find all File elements
-        file_elems = list(files_element.iter('File'))
-        if not file_elems:
-            file_elems = files_element.findall('File')
+        # Find all File elements with namespace handling
+        if ns_map:
+            file_elems = list(files_element.iter(f'{{{ns_map["ns"]}}}File'))
+            if not file_elems:
+                file_elems = files_element.findall(f'ns:File', ns_map)
+        else:
+            file_elems = list(files_element.iter('File'))
+            if not file_elems:
+                file_elems = files_element.findall('File')
             
         self._log(f"  Processing {len(file_elems)} file entries...")
         
@@ -330,17 +335,22 @@ Note: This tool must be run as Administrator."""
                     
         return files_collected
         
-    def collect_registry(self, package_id, reg_element):
+    def collect_registry(self, package_id, reg_element, ns_map=None):
         """Collect registry keys specified in XML"""
         if reg_element is None:
             return 0
             
         reg_collected = 0
         
-        # Find all Registry elements
-        reg_elems = list(reg_element.iter('Registry'))
-        if not reg_elems:
-            reg_elems = reg_element.findall('Registry')
+        # Find all Registry elements with namespace handling
+        if ns_map:
+            reg_elems = list(reg_element.iter(f'{{{ns_map["ns"]}}}Registry'))
+            if not reg_elems:
+                reg_elems = reg_element.findall(f'ns:Registry', ns_map)
+        else:
+            reg_elems = list(reg_element.iter('Registry'))
+            if not reg_elems:
+                reg_elems = reg_element.findall('Registry')
             
         self._log(f"  Processing {len(reg_elems)} registry entries...")
         
@@ -384,17 +394,22 @@ Note: This tool must be run as Administrator."""
                 
         return reg_collected
         
-    def collect_eventlogs(self, package_id, evt_element):
+    def collect_eventlogs(self, package_id, evt_element, ns_map=None):
         """Collect event logs specified in XML"""
         if evt_element is None:
             return 0
             
         evt_collected = 0
         
-        # Find all EventLog elements
-        evt_elems = list(evt_element.iter('EventLog'))
-        if not evt_elems:
-            evt_elems = evt_element.findall('EventLog')
+        # Find all EventLog elements with namespace handling
+        if ns_map:
+            evt_elems = list(evt_element.iter(f'{{{ns_map["ns"]}}}EventLog'))
+            if not evt_elems:
+                evt_elems = evt_element.findall(f'ns:EventLog', ns_map)
+        else:
+            evt_elems = list(evt_element.iter('EventLog'))
+            if not evt_elems:
+                evt_elems = evt_element.findall('EventLog')
             
         self._log(f"  Processing {len(evt_elems)} event log entries...")
         
@@ -438,17 +453,22 @@ Note: This tool must be run as Administrator."""
                     
         return evt_collected
         
-    def collect_commands(self, package_id, cmd_element):
+    def collect_commands(self, package_id, cmd_element, ns_map=None):
         """Run and collect command outputs specified in XML"""
         if cmd_element is None:
             return 0
             
         cmd_collected = 0
         
-        # Find all Command elements
-        cmd_elems = list(cmd_element.iter('Command'))
-        if not cmd_elems:
-            cmd_elems = cmd_element.findall('Command')
+        # Find all Command elements with namespace handling
+        if ns_map:
+            cmd_elems = list(cmd_element.iter(f'{{{ns_map["ns"]}}}Command'))
+            if not cmd_elems:
+                cmd_elems = cmd_element.findall(f'ns:Command', ns_map)
+        else:
+            cmd_elems = list(cmd_element.iter('Command'))
+            if not cmd_elems:
+                cmd_elems = cmd_element.findall('Command')
             
         self._log(f"  Processing {len(cmd_elems)} command entries...")
         
@@ -623,28 +643,28 @@ Note: This tool must be run as Administrator."""
                 # Collect files
                 files_elem = find_child(package, 'Files')
                 if files_elem is not None:
-                    count = self.collect_files(pkg_id, files_elem)
+                    count = self.collect_files(pkg_id, files_elem, ns_map)
                     if count:
                         self._log(f"  Collected {count} files")
                     
                 # Collect registry
                 reg_elem = find_child(package, 'Registries')
                 if reg_elem is not None:
-                    count = self.collect_registry(pkg_id, reg_elem)
+                    count = self.collect_registry(pkg_id, reg_elem, ns_map)
                     if count:
                         self._log(f"  Collected {count} registry keys")
                     
                 # Collect event logs
                 evt_elem = find_child(package, 'EventLogs')
                 if evt_elem is not None:
-                    count = self.collect_eventlogs(pkg_id, evt_elem)
+                    count = self.collect_eventlogs(pkg_id, evt_elem, ns_map)
                     if count:
                         self._log(f"  Collected {count} event logs")
                     
                 # Collect commands
                 cmd_elem = find_child(package, 'Commands')
                 if cmd_elem is not None:
-                    count = self.collect_commands(pkg_id, cmd_elem)
+                    count = self.collect_commands(pkg_id, cmd_elem, ns_map)
                     if count:
                         self._log(f"  Collected {count} command outputs")
                     
