@@ -24,7 +24,7 @@ jobs:
       run: pip install pyinstaller
         
     - name: Build executable
-      run: pyinstaller --onefile --windowed --name "IntuneODCCollector" main.py
+      run: pyinstaller --clean IntuneODCCollector.spec
         
     - name: Upload artifact
       uses: actions/upload-artifact@v4
